@@ -355,75 +355,77 @@ with col_stats:
     st.code(f"STATUS: {bot.status_msg}")
 
 # --- MAIN VISUALIZATION ---
+# --- MAIN VISUALIZATION ---
 with col_vis:
-    fig, ax = plt.subplots(figsize=(6,6), facecolor=COLOR_BG)
-    ax.set_facecolor(COLOR_BG)
+    # 1. Buat Wadah Kosong (Placeholder) agar tidak kedip satu halaman
+    map_placeholder = st.empty()
     
-    ax.set_xticks(np.arange(-.5, GRID_SIZE, 1))
-    ax.set_yticks(np.arange(-.5, GRID_SIZE, 1))
-    ax.grid(color=COLOR_GRID, linestyle='-', linewidth=1.5)
-    ax.tick_params(left=False, bottom=False, labelleft=False, labelbottom=False)
-    
-    grid = st.session_state.sim_map
-    for r in range(GRID_SIZE):
-        for c in range(GRID_SIZE):
-            cell = grid[r, c]
-            if cell == WALL:
-                ax.plot([c-0.3, c+0.3], [r-0.3, r+0.3], color=COLOR_WALL, linewidth=3)
-                ax.plot([c-0.3, c+0.3], [r+0.3, r-0.3], color=COLOR_WALL, linewidth=3)
-            elif cell == CHARGER:
-                rect = patches.Rectangle((c-.4, r-.4), 0.8, 0.8, linewidth=2, edgecolor=COLOR_CHARGER, facecolor='none')
-                ax.add_patch(rect)
-                ax.plot([c], [r], marker='+', color=COLOR_CHARGER, markersize=15, markeredgewidth=3)
-            elif cell == DIRT:
-                size = 0.2 + (r*c % 3)/10 
-                circle = patches.Circle((c, r), size, color=COLOR_DIRT, alpha=0.9)
-                ax.add_patch(circle)
-            elif cell == OBSTACLE:
-                tri_pts = [[c, r+0.35], [c-0.35, r-0.35], [c+0.35, r-0.35]]
-                ax.add_patch(patches.Polygon(tri_pts, color=COLOR_OBSTACLE))
+    # 2. Gambar di dalam wadah tersebut
+    with map_placeholder.container():
+        fig, ax = plt.subplots(figsize=(6,6), facecolor=COLOR_BG)
+        ax.set_facecolor(COLOR_BG)
+        
+        ax.set_xticks(np.arange(-.5, GRID_SIZE, 1))
+        ax.set_yticks(np.arange(-.5, GRID_SIZE, 1))
+        ax.grid(color=COLOR_GRID, linestyle='-', linewidth=1.5)
+        ax.tick_params(left=False, bottom=False, labelleft=False, labelbottom=False)
+        
+        grid = st.session_state.sim_map
+        for r in range(GRID_SIZE):
+            for c in range(GRID_SIZE):
+                cell = grid[r, c]
+                if cell == WALL:
+                    ax.plot([c-0.3, c+0.3], [r-0.3, r+0.3], color=COLOR_WALL, linewidth=3)
+                    ax.plot([c-0.3, c+0.3], [r+0.3, r-0.3], color=COLOR_WALL, linewidth=3)
+                elif cell == CHARGER:
+                    rect = patches.Rectangle((c-.4, r-.4), 0.8, 0.8, linewidth=2, edgecolor=COLOR_CHARGER, facecolor='none')
+                    ax.add_patch(rect)
+                    ax.plot([c], [r], marker='+', color=COLOR_CHARGER, markersize=15, markeredgewidth=3)
+                elif cell == DIRT:
+                    size = 0.2 + (r*c % 3)/10 
+                    circle = patches.Circle((c, r), size, color=COLOR_DIRT, alpha=0.9)
+                    ax.add_patch(circle)
+                elif cell == OBSTACLE:
+                    tri_pts = [[c, r+0.35], [c-0.35, r-0.35], [c+0.35, r-0.35]]
+                    ax.add_patch(patches.Polygon(tri_pts, color=COLOR_OBSTACLE))
 
-    rr, rc = bot.pos
-    glow = patches.Circle((rc, rr), 0.45, color=COLOR_ROBOT_GLOW, alpha=0.3)
-    ax.add_patch(glow)
-    core = patches.Circle((rc, rr), 0.25, color=COLOR_ROBOT, zorder=10)
-    ax.add_patch(core)
-    
-    if bot.current_path:
-        path_y = [p[0] for p in bot.current_path]
-        path_x = [p[1] for p in bot.current_path]
-        path_y.insert(0, rr); path_x.insert(0, rc)
-        ax.plot(path_x, path_y, color=COLOR_PATH, linewidth=4, alpha=0.3)
-        ax.plot(path_x, path_y, color=COLOR_PATH, linewidth=1.5, alpha=0.9)
+        rr, rc = bot.pos
+        glow = patches.Circle((rc, rr), 0.45, color=COLOR_ROBOT_GLOW, alpha=0.3)
+        ax.add_patch(glow)
+        core = patches.Circle((rc, rr), 0.25, color=COLOR_ROBOT, zorder=10)
+        ax.add_patch(core)
+        
+        if bot.current_path:
+            path_y = [p[0] for p in bot.current_path]
+            path_x = [p[1] for p in bot.current_path]
+            path_y.insert(0, rr); path_x.insert(0, rc)
+            ax.plot(path_x, path_y, color=COLOR_PATH, linewidth=4, alpha=0.3)
+            ax.plot(path_x, path_y, color=COLOR_PATH, linewidth=1.5, alpha=0.9)
 
-    # ==========================================
-    # RENDER ANIMASI (LAYER PALING ATAS)
-    # ==========================================
-    # Animasi Kilat (Storm)
-    if st.session_state.anim_lightning > 0:
-        # Buat polygon acak besar yang menutupi layar
-        flash_pts = [[random.uniform(-1, GRID_SIZE), random.uniform(-1, GRID_SIZE)] for _ in range(6)]
-        # Layer Glow
-        lightning_glow = patches.Polygon(flash_pts, closed=True, color=COLOR_LIGHTNING_GLOW, alpha=0.5, zorder=100)
-        ax.add_patch(lightning_glow)
-        # Layer Core Putih
-        lightning_core = patches.Polygon(flash_pts, closed=True, color=COLOR_LIGHTNING_CORE, alpha=0.8, fill=False, linewidth=3, zorder=101)
-        ax.add_patch(lightning_core)
-        st.session_state.anim_lightning -= 1
+        # RENDER ANIMASI
+        if st.session_state.anim_lightning > 0:
+            flash_pts = [[random.uniform(-1, GRID_SIZE), random.uniform(-1, GRID_SIZE)] for _ in range(6)]
+            lightning_glow = patches.Polygon(flash_pts, closed=True, color=COLOR_LIGHTNING_GLOW, alpha=0.5, zorder=100)
+            ax.add_patch(lightning_glow)
+            lightning_core = patches.Polygon(flash_pts, closed=True, color=COLOR_LIGHTNING_CORE, alpha=0.8, fill=False, linewidth=3, zorder=101)
+            ax.add_patch(lightning_core)
+            st.session_state.anim_lightning -= 1
 
-    # Animasi Hujan (Rain)
-    if st.session_state.anim_rain > 0:
-        # Gambar banyak garis miring kecil
-        for _ in range(150): # Jumlah tetesan hujan
-            rain_x = random.uniform(-0.5, GRID_SIZE-0.5)
-            rain_y = random.uniform(-0.5, GRID_SIZE-0.5)
-            # Garis miring ke bawah
-            ax.plot([rain_x, rain_x + 0.2], [rain_y, rain_y + 0.4], color=COLOR_RAIN, linewidth=1, alpha=0.6, zorder=90)
-        st.session_state.anim_rain -= 1
+        if st.session_state.anim_rain > 0:
+            for _ in range(150): 
+                rain_x = random.uniform(-0.5, GRID_SIZE-0.5)
+                rain_y = random.uniform(-0.5, GRID_SIZE-0.5)
+                ax.plot([rain_x, rain_x + 0.2], [rain_y, rain_y + 0.4], color=COLOR_RAIN, linewidth=1, alpha=0.6, zorder=90)
+            st.session_state.anim_rain -= 1
 
-    ax.set_xlim(-0.5, GRID_SIZE-0.5)
-    ax.set_ylim(GRID_SIZE-0.5, -0.5)
-    st.pyplot(fig)
+        ax.set_xlim(-0.5, GRID_SIZE-0.5)
+        ax.set_ylim(GRID_SIZE-0.5, -0.5)
+        
+        # Tampilkan Plot
+        st.pyplot(fig)
+        
+        # PENTING: Bersihkan memori agar tidak makin berat (Mencegah Lag)
+        plt.close(fig)
 
 # --- LOOP ---
 if st.session_state.run or st.session_state.weather_trigger or st.session_state.anim_lightning > 0 or st.session_state.anim_rain > 0:
@@ -446,4 +448,5 @@ if st.session_state.run or st.session_state.weather_trigger or st.session_state.
                 st.session_state.bot.ai_recommendation = get_ai_analysis(rob_state, stats, w_event)
                 st.session_state.last_ai_update = time.time()
         
+
     st.rerun()
