@@ -1,6 +1,9 @@
 import streamlit as st
 import numpy as np
 import time
+import matplotlib
+# PENTING: Gunakan backend 'Agg' untuk server (Vultr/Cloud) agar tidak crash visual
+matplotlib.use('Agg') 
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from collections import deque
@@ -41,7 +44,7 @@ COLOR_LIGHTNING = '#E0FFFF'
 COLOR_RAIN = '#4FC3F7'
 
 # ==========================================
-# 2. AI ENGINE (ROBUST & NON-BLOCKING)
+# 2. AI ENGINE (NON-BLOCKING)
 # ==========================================
 def init_gemini():
     api_key = None
@@ -56,9 +59,8 @@ def init_gemini():
     return False
 
 def get_ai_analysis(robot_state, grid_stats, weather):
-    # Cek status kunci dulu
     if not st.session_state.get('gemini_active', False):
-        return "⚠️ AI Offline: Missing API Key"
+        return "⚠️ AI Offline"
 
     prompt = f"""
     Role: Solar Farm Supervisor.
@@ -66,22 +68,16 @@ def get_ai_analysis(robot_state, grid_stats, weather):
     Efficiency: {grid_stats['efficiency']}% | Weather: {weather if weather else "Clear"}
     Command: One short strategic order (Max 6 words).
     """
-
     try:
-        # STRATEGI BERTINGKAT (Agar tidak error 404)
         try:
-            # 1. Coba Model Terbaru (Cepat)
             model = genai.GenerativeModel('gemini-1.5-flash')
             response = model.generate_content(prompt)
             return response.text.strip()
         except Exception:
-            # 2. Jika Error (404), Coba Model Lama (Stabil)
             model = genai.GenerativeModel('gemini-pro')
             response = model.generate_content(prompt)
             return response.text.strip()
-            
-    except Exception as e:
-        # 3. Jika Semua Gagal, Jangan Crash! Return pesan error pendek.
+    except Exception:
         return f"⚠️ Comms Error"
 
 # ==========================================
@@ -124,7 +120,6 @@ def update_environment(grid, weather_event=None):
     rows, cols = grid.shape
     new_grid = grid.copy()
     
-    # Cuaca
     if weather_event == "SANDSTORM":
         for _ in range(random.randint(5, 8)):
             r, c = random.randint(0, rows-1), random.randint(0, cols-1)
@@ -135,7 +130,6 @@ def update_environment(grid, weather_event=None):
                 if new_grid[r, c] == DIRT and random.random() < 0.4:
                     new_grid[r, c] = EMPTY
 
-    # Gerakkan Obstacle
     obstacles = []
     for r in range(rows):
         for c in range(cols):
@@ -230,7 +224,7 @@ class SmartRobot:
             self.status_msg = "PATH BLOCKED"
 
 # ==========================================
-# 5. UI SETUP
+# 5. UI SETUP & RENDERER
 # ==========================================
 def draw_visual_legend():
     fig_leg, ax_leg = plt.subplots(figsize=(4, 2), facecolor=COLOR_BG)
@@ -240,7 +234,6 @@ def draw_visual_legend():
     ax_leg.add_patch(patches.Circle((0.1, 0.8), radius=0.05, color=COLOR_ROBOT))
     ax_leg.text(0.2, 0.78, "Robot", color='white', fontsize=10)
     
-    # MANUAL POLYGON (Anti-Error)
     tri_pts = [[0.1, 0.61], [0.04, 0.49], [0.16, 0.49]]
     ax_leg.add_patch(patches.Polygon(tri_pts, color=COLOR_OBSTACLE))
     ax_leg.text(0.2, 0.53, "Obstacle", color='white', fontsize=10)
@@ -253,6 +246,7 @@ def draw_visual_legend():
     
     return fig_leg
 
+# --- SETUP PAGE ---
 st.set_page_config(page_title="Solar Sentinel AI", layout="wide", page_icon="☀️")
 
 st.markdown(f"""
@@ -261,6 +255,8 @@ st.markdown(f"""
     h1, h2, h3 {{ color: #38bdf8 !important; }}
     div[data-testid="stMetricValue"] {{ font-family: 'Courier New', monospace; color: #34d399; }}
     div[data-testid="stMarkdownContainer"] p {{ color: #cbd5e1; }}
+    /* Stabilize Layout */
+    .element-container {{ margin-bottom: 0px !important; }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -288,7 +284,7 @@ if 'sim_map' not in st.session_state:
 
 col_ctrl, col_vis, col_stats = st.columns([1, 2, 1])
 
-# --- CONTROL ---
+# --- STATIC UI (Bagian ini TIDAK akan berkedip) ---
 with col_ctrl:
     st.subheader("🕹️ Command")
     if not st.session_state.run:
@@ -314,11 +310,44 @@ with col_ctrl:
     st.subheader("ℹ️ Legend")
     st.pyplot(draw_visual_legend()) 
 
-# --- AI & STATS ---
+# --- PLACEHOLDERS (Kunci Anti-Flicker) ---
+with col_vis:
+    # Kita siapkan wadah kosong dulu
+    map_placeholder = st.empty()
+
 with col_stats:
     st.subheader("🧠 Gemini Copilot")
-    ai_box = st.empty() # Placeholder untuk AI agar tidak kedip
-    
+    ai_placeholder = st.empty()
+    st.divider()
+    st.subheader("📊 Telemetry")
+    stats_placeholder = st.empty()
+
+# --- LOGIC & RENDER LOOP ---
+
+# 1. Update Logic
+if st.session_state.run or st.session_state.weather_trigger or st.session_state.anim_lightning > 0 or st.session_state.anim_rain > 0:
+    # Update Environment
+    if st.session_state.weather_trigger:
+        st.session_state.sim_map = update_environment(st.session_state.sim_map, st.session_state.weather_trigger)
+        st.session_state.weather_trigger = None
+    else:
+        st.session_state.sim_map = update_environment(st.session_state.sim_map)
+
+    # Update Robot
+    if st.session_state.run:
+        st.session_state.bot.decide_and_move(st.session_state.sim_map)
+        
+        # AI Update (Non-Blocking)
+        if st.session_state.gemini_active:
+            if time.time() - st.session_state.last_ai_update > 5: 
+                efficiency = ((GRID_SIZE**2 - np.count_nonzero(st.session_state.sim_map == DIRT)) / GRID_SIZE**2) * 100
+                stats = {"efficiency": efficiency, "obstacles": np.count_nonzero(st.session_state.sim_map == OBSTACLE)}
+                rob_state = {"battery": int(st.session_state.bot.battery), "status": st.session_state.bot.status_msg}
+                st.session_state.bot.ai_recommendation = get_ai_analysis(rob_state, stats, None)
+                st.session_state.last_ai_update = time.time()
+
+# 2. Render Metrics (Ke dalam Placeholder)
+with stats_placeholder.container():
     dirt_count = np.count_nonzero(st.session_state.sim_map == DIRT)
     clean_cells = (GRID_SIZE * GRID_SIZE) - dirt_count
     efficiency = (clean_cells / (GRID_SIZE * GRID_SIZE)) * 100
@@ -337,98 +366,71 @@ with col_stats:
     st.metric("Battery", f"{int(bot.battery)}%")
     st.progress(int(bot.battery))
     st.code(f"STATUS: {bot.status_msg}")
+
+ai_placeholder.info(f"🤖 **Supervisor:** {st.session_state.bot.ai_recommendation}")
+
+# 3. Render Map (Ke dalam Placeholder)
+with map_placeholder.container():
+    fig, ax = plt.subplots(figsize=(6,6), facecolor=COLOR_BG)
+    ax.set_facecolor(COLOR_BG)
+    ax.set_xticks(np.arange(-.5, GRID_SIZE, 1)); ax.set_yticks(np.arange(-.5, GRID_SIZE, 1))
+    ax.grid(color=COLOR_GRID, linestyle='-', linewidth=1.5)
+    ax.tick_params(left=False, bottom=False, labelleft=False, labelbottom=False)
     
-    # Render AI Text
-    ai_box.info(f"🤖 **Supervisor:** {st.session_state.bot.ai_recommendation}")
+    # Draw Map
+    grid = st.session_state.sim_map
+    for r in range(GRID_SIZE):
+        for c in range(GRID_SIZE):
+            cell = grid[r, c]
+            if cell == WALL:
+                ax.plot([c-0.3, c+0.3], [r-0.3, r+0.3], color=COLOR_WALL, linewidth=3)
+                ax.plot([c-0.3, c+0.3], [r+0.3, r-0.3], color=COLOR_WALL, linewidth=3)
+            elif cell == CHARGER:
+                rect = patches.Rectangle((c-.4, r-.4), 0.8, 0.8, linewidth=2, edgecolor=COLOR_CHARGER, facecolor='none')
+                ax.add_patch(rect)
+                ax.plot([c], [r], marker='+', color=COLOR_CHARGER, markersize=15, markeredgewidth=3)
+            elif cell == DIRT:
+                size = 0.2 + (r*c % 3)/10 
+                circle = patches.Circle((c, r), size, color=COLOR_DIRT, alpha=0.9)
+                ax.add_patch(circle)
+            elif cell == OBSTACLE:
+                tri_pts = [[c, r+0.35], [c-0.35, r-0.35], [c+0.35, r-0.35]]
+                ax.add_patch(patches.Polygon(tri_pts, color=COLOR_OBSTACLE))
 
-# --- MAIN VISUALIZATION (ANTI-FLICKER) ---
-with col_vis:
-    # GUNAKAN PLACEHOLDER AGAR TIDAK MENGHAPUS SELURUH HALAMAN
-    map_placeholder = st.empty()
+    # Draw Robot
+    rr, rc = st.session_state.bot.pos
+    glow = patches.Circle((rc, rr), 0.45, color=COLOR_ROBOT_GLOW, alpha=0.3)
+    ax.add_patch(glow)
+    core = patches.Circle((rc, rr), 0.25, color=COLOR_ROBOT, zorder=10)
+    ax.add_patch(core)
     
-    # Logic Update di luar rendering
-    if st.session_state.run or st.session_state.weather_trigger or st.session_state.anim_lightning > 0 or st.session_state.anim_rain > 0:
-        time.sleep(0.1) # Loop speed
+    # Draw Path
+    if st.session_state.bot.current_path:
+        path_y = [p[0] for p in st.session_state.bot.current_path]; path_x = [p[1] for p in st.session_state.bot.current_path]
+        path_y.insert(0, rr); path_x.insert(0, rc)
+        ax.plot(path_x, path_y, color=COLOR_PATH, linewidth=4, alpha=0.3)
+        ax.plot(path_x, path_y, color=COLOR_PATH, linewidth=1.5, alpha=0.9)
+
+    # Animasi Visual
+    if st.session_state.anim_lightning > 0:
+        flash_pts = [[random.uniform(-1, GRID_SIZE), random.uniform(-1, GRID_SIZE)] for _ in range(6)]
+        lightning_glow = patches.Polygon(flash_pts, closed=True, color=COLOR_LIGHTNING, alpha=0.3, zorder=100)
+        ax.add_patch(lightning_glow)
+        st.session_state.anim_lightning -= 1
         
-        # Update Environment
-        if st.session_state.weather_trigger:
-            st.session_state.sim_map = update_environment(st.session_state.sim_map, st.session_state.weather_trigger)
-            st.session_state.weather_trigger = None
-        else:
-            st.session_state.sim_map = update_environment(st.session_state.sim_map)
+    if st.session_state.anim_rain > 0:
+        for _ in range(80): 
+            rx, ry = random.uniform(-0.5, 9.5), random.uniform(-0.5, 9.5)
+            ax.plot([rx, rx+0.1], [ry, ry+0.2], color=COLOR_RAIN, alpha=0.6, linewidth=1)
+        st.session_state.anim_rain -= 1
 
-        # Update Robot
-        if st.session_state.run:
-            st.session_state.bot.decide_and_move(st.session_state.sim_map)
-            
-            # Update AI (Tiap 5 detik, jangan spam)
-            if st.session_state.gemini_active:
-                if time.time() - st.session_state.last_ai_update > 5: 
-                    stats = {"efficiency": efficiency, "obstacles": np.count_nonzero(st.session_state.sim_map == OBSTACLE)}
-                    rob_state = {"battery": int(bot.battery), "status": bot.status_msg}
-                    # Panggil AI (Non-Blocking Logic sudah di handle di fungsi)
-                    st.session_state.bot.ai_recommendation = get_ai_analysis(rob_state, stats, None)
-                    st.session_state.last_ai_update = time.time()
+    ax.set_xlim(-0.5, GRID_SIZE-0.5); ax.set_ylim(GRID_SIZE-0.5, -0.5)
+    
+    # RENDER PLOT (Tanpa st.pyplot default agar tidak kedip)
+    st.pyplot(fig)
+    plt.close(fig) # MEMORY CLEANUP
 
-    # RENDER GAMBAR (Hanya bagian ini yang digambar ulang)
-    with map_placeholder.container():
-        fig, ax = plt.subplots(figsize=(6,6), facecolor=COLOR_BG)
-        ax.set_facecolor(COLOR_BG)
-        ax.set_xticks(np.arange(-.5, GRID_SIZE, 1)); ax.set_yticks(np.arange(-.5, GRID_SIZE, 1))
-        ax.grid(color=COLOR_GRID, linestyle='-', linewidth=1.5)
-        ax.tick_params(left=False, bottom=False, labelleft=False, labelbottom=False)
-        
-        # Draw Map
-        grid = st.session_state.sim_map
-        for r in range(GRID_SIZE):
-            for c in range(GRID_SIZE):
-                cell = grid[r, c]
-                if cell == WALL:
-                    ax.plot([c-0.3, c+0.3], [r-0.3, r+0.3], color=COLOR_WALL, linewidth=3)
-                    ax.plot([c-0.3, c+0.3], [r+0.3, r-0.3], color=COLOR_WALL, linewidth=3)
-                elif cell == CHARGER:
-                    rect = patches.Rectangle((c-.4, r-.4), 0.8, 0.8, linewidth=2, edgecolor=COLOR_CHARGER, facecolor='none')
-                    ax.add_patch(rect)
-                    ax.plot([c], [r], marker='+', color=COLOR_CHARGER, markersize=15, markeredgewidth=3)
-                elif cell == DIRT:
-                    size = 0.2 + (r*c % 3)/10 
-                    circle = patches.Circle((c, r), size, color=COLOR_DIRT, alpha=0.9)
-                    ax.add_patch(circle)
-                elif cell == OBSTACLE:
-                    tri_pts = [[c, r+0.35], [c-0.35, r-0.35], [c+0.35, r-0.35]]
-                    ax.add_patch(patches.Polygon(tri_pts, color=COLOR_OBSTACLE))
-
-        # Draw Robot
-        rr, rc = bot.pos
-        glow = patches.Circle((rc, rr), 0.45, color=COLOR_ROBOT_GLOW, alpha=0.3)
-        ax.add_patch(glow)
-        core = patches.Circle((rc, rr), 0.25, color=COLOR_ROBOT, zorder=10)
-        ax.add_patch(core)
-        
-        # Draw Path
-        if bot.current_path:
-            path_y = [p[0] for p in bot.current_path]; path_x = [p[1] for p in bot.current_path]
-            path_y.insert(0, rr); path_x.insert(0, rc)
-            ax.plot(path_x, path_y, color=COLOR_PATH, linewidth=4, alpha=0.3)
-            ax.plot(path_x, path_y, color=COLOR_PATH, linewidth=1.5, alpha=0.9)
-
-        # Animasi Visual
-        if st.session_state.anim_lightning > 0:
-            flash_pts = [[random.uniform(-1, GRID_SIZE), random.uniform(-1, GRID_SIZE)] for _ in range(6)]
-            lightning_glow = patches.Polygon(flash_pts, closed=True, color=COLOR_LIGHTNING, alpha=0.3, zorder=100)
-            ax.add_patch(lightning_glow)
-            st.session_state.anim_lightning -= 1
-            
-        if st.session_state.anim_rain > 0:
-            for _ in range(80): 
-                rx, ry = random.uniform(-0.5, 9.5), random.uniform(-0.5, 9.5)
-                ax.plot([rx, rx+0.1], [ry, ry+0.2], color=COLOR_RAIN, alpha=0.6, linewidth=1)
-            st.session_state.anim_rain -= 1
-
-        ax.set_xlim(-0.5, GRID_SIZE-0.5); ax.set_ylim(GRID_SIZE-0.5, -0.5)
-        st.pyplot(fig)
-        plt.close(fig) # CLEANUP MEMORY
-        
-    # TRIGGER RERUN OTOMATIS JIKA SEDANG JALAN
-    if st.session_state.run or st.session_state.anim_lightning > 0 or st.session_state.anim_rain > 0:
-        st.rerun()
+# 4. Trigger Rerun (Auto-Loop)
+if st.session_state.run or st.session_state.anim_lightning > 0 or st.session_state.anim_rain > 0:
+    time.sleep(0.1) # Throttle speed
+    st.rerun()
